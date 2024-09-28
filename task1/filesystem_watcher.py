@@ -27,17 +27,17 @@ class FileSystemWatcher:
 
   def walk_along_dirs(self):
     current_dir = os.path.abspath('.')
-    filesystem_metadata = []
+    filesystem_metadata = dict()
     
     for elem in os.walk(current_dir):
       path, dirs, files = elem
 
-      transformed_files = list(map(lambda x: f'{path}/{x}', files))
+      transformed_files = list(map(lambda x: f'{path}\\{x}', files))
       for filename in transformed_files:
         if not filename.endswith(self.config_fp):
           binaries = self.read_binary(filename)
           check_sum = self.calc_check_sum(binaries)
-          filesystem_metadata.append((filename, check_sum))
+          filesystem_metadata[filename] = check_sum
 
     return filesystem_metadata
 
@@ -64,7 +64,7 @@ class FileSystemWatcher:
 
   def write_to_configuration_file(self, check_sums):
     with open(self.config_fp, 'w') as config_file:
-      config_file.write('\n'.join([f'{filename}: {check_sum}' for filename, check_sum in check_sums]))
+      config_file.write('\n'.join([f'{filename}: {check_sum}' for filename, check_sum in check_sums.items()]))
 
   def read_configuration_file(self):
     with open(self.config_fp, 'r') as config_file:
@@ -85,11 +85,15 @@ def watch():
   check_sums = watcher.read_configuration_file()
   current_info = watcher.walk_along_dirs()
 
-  for filename, check_sum in current_info:
-    if filename not in check_sums.keys():
-      print(f'{filename} was created with checksum {check_sum}')
-    elif check_sums[filename] != check_sum:
+  for filename, check_sum in check_sums.items():
+    if filename not in current_info.keys():
+      print(f'{filename} was deleted.')
+    elif current_info[filename] != check_sum:
       print(f'{filename} content has been changed.')
+
+  for filename, check_sum in current_info.items():
+    if filename not in check_sums.keys():
+      print(f'{filename} was created.')
 
   watcher.write_to_configuration_file(current_info)
 

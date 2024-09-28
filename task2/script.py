@@ -1,4 +1,4 @@
-import os
+import sys
 
 
 class FileSystemWatcher:
@@ -32,7 +32,7 @@ class FileSystemWatcher:
     for elem in os.walk(current_dir):
       path, dirs, files = elem
 
-      transformed_files = list(map(lambda x: f'{path}/{x}', files))
+      transformed_files = list(map(lambda x: f'{path}\\{x}', files))
       for filename in transformed_files:
         if not filename.endswith(self.config_fp):
           binaries = self.read_binary(filename)
@@ -79,25 +79,28 @@ class FileSystemWatcher:
 
       return checksums_view
 
-working_dir = os.path.dirname(os.path.realpath(__file__))
-build_dir = f'{working_dir}\\build\\'
-script = f'observer.py'
-script_location = f'{working_dir}\\{script}'
-observable_exe = f'{script[:-3]}.exe'
 
 watcher = FileSystemWatcher()
 
-os.system(f"pyinstaller --onefile --distpath . --noconfirm -n {observable_exe} {script_location}")
-
 checksums = watcher.read_configuration_file()
-current_info = watcher.get_file_checksum(observable_exe)
 
-if checksums.get(observable_exe, 0) == -1:
-  watcher.write_to_configuration_file([(observable_exe, current_info)])
-elif checksums.get(observable_exe, 0) != 0:
-  config_checksum = checksums[observable_exe]
-  if config_checksum != current_info:
+if len(checksums) == 0:
+  watcher.write_to_configuration_file([(sys.argv[0], 0)])
+
+current_checksum = watcher.get_file_checksum(sys.argv[0])
+
+print(f'previous checksums: {checksums}, current checksum: {current_checksum}')
+if checksums.get(sys.argv[0], -1) == -1:
+  print('incorrect executable filename in .fileinfo')
+  sys.exit(0)
+if checksums.get(sys.argv[0], -1) == 0:
+  watcher.write_to_configuration_file([(sys.argv[0], current_checksum)])
+elif checksums.get(sys.argv[0], -1) != 0:
+  config_checksum = checksums[sys.argv[0]]
+  if config_checksum != current_checksum:
     print('Changed!')
-    watcher.write_to_configuration_file([(observable_exe, current_info)])
+    watcher.write_to_configuration_file([(sys.argv[0], current_checksum)])
+    input()
   else:
     print('Same!')
+    input()
