@@ -84,22 +84,26 @@ watcher = FileSystemWatcher()
 
 checksums = watcher.read_configuration_file()
 
-if len(checksums) == 0:
-  watcher.write_to_configuration_file([(sys.argv[0], 0)])
+executable = sys.argv[0].split('\\')[-1]
 
-current_checksum = watcher.get_file_checksum(sys.argv[0])
+print(executable)
+
+if len(checksums) == 0:
+  watcher.write_to_configuration_file([(executable, 0)])
+
+current_checksum = watcher.get_file_checksum(executable)
 
 print(f'previous checksums: {checksums}, current checksum: {current_checksum}')
-if checksums.get(sys.argv[0], -1) == -1:
+if checksums.get(executable, -1) == -1:
   print('incorrect executable filename in .fileinfo')
   sys.exit(0)
-if checksums.get(sys.argv[0], -1) == 0:
-  watcher.write_to_configuration_file([(sys.argv[0], current_checksum)])
-elif checksums.get(sys.argv[0], -1) != 0:
-  config_checksum = checksums[sys.argv[0]]
+if checksums.get(executable, -1) == 0:
+  watcher.write_to_configuration_file([(executable, current_checksum)])
+elif checksums.get(executable, -1) != 0:
+  config_checksum = checksums[executable]
   if config_checksum != current_checksum:
     print('Changed!')
-    watcher.write_to_configuration_file([(sys.argv[0], current_checksum)])
+    watcher.write_to_configuration_file([(executable, current_checksum)])
     input()
   else:
     print('Same!')
