@@ -1,109 +1,123 @@
 import sys
 import pefile
+import subprocess
+import psutil
+import os
 
+MAGIC_WORD = 0
 
-class FileSystemWatcher:
-  def __init__(self, config_file_path='.fileinfo'):
-    self.config_fp = config_file_path
-    self.config = self.get_or_create_config_file()
+def extract_process(p_name):
+  print(f"Process name: {p_name}")
 
-  def read_content(self, file):
-    file_contents = file.read()
-    result = bin(int(file_contents.hex(), 16)).replace('0b', '')
+  pid = None
+  for process in [p.info for p in psutil.process_iter(['pid', 'name'])]:
+    if process['name'].endswith(p_name):
+      pid = process['pid']
+      break
 
-    return result
+  print(f"PID: {pid}")
+  return psutil.Process(pid)
 
-  def read_binary(self, filename):
-    with open(filename, 'rb') as file:
-      file_contents = self.read_content(file)
+class CommandLineArguments:
+  def __init__(self):
+    self.current_executable = None
+    self.running_copy = False
+    self.original_executable = None
 
-      if len(file_contents) % 16 != 0:
-        file_contents += (16 - len(file_contents)) * '0'
+  def is_copy(self):
+    return self.current_executable.find('.copy') != -1
+  
+  def extract_current_filename(self):
+    return self.current_executable.split('\\')[-1]
+  
+  def extract_original_filename(self):
+    return self.original_executable.split('\\')[-1]
 
-      hex_p = []
-      for i in range(len(file_contents) // 16):
-        hex_p.append(file_contents[16 * i:16 * (i + 1)])
-
-      return hex_p
-
-  def walk_along_dirs(self):
-    current_dir = os.path.abspath('.')
-    filesystem_metadata = []
+class ArgvParser:
+  @staticmethod
+  def parse(argv):
+    parsed_command = CommandLineArguments()
     
-    for elem in os.walk(current_dir):
-      path, dirs, files = elem
+    if len(argv) == 1:
+      parsed_command.current_executable = argv[0]
+      parsed_command.running_copy = False
+      parsed_command.original_executable = None
+    elif len(argv) == 2:
+      parsed_command.current_executable = argv[0]
+      parsed_command.running_copy = argv[1] == 'true'
+      parsed_command.original_executable = None
+    else:
+      parsed_command.current_executable = argv[0]
+      parsed_command.running_copy = argv[1] == 'true'
+      parsed_command.original_executable = argv[2]
 
-      transformed_files = list(map(lambda x: f'{path}\\{x}', files))
-      for filename in transformed_files:
-        if not filename.endswith(self.config_fp):
-          binaries = self.read_binary(filename)
-          check_sum = self.calc_check_sum(binaries)
-          filesystem_metadata.append((filename, check_sum))
+    return parsed_command
+  
+class PEfileProcessor:
+  def __init__(self, executable_path):
+    self.executable = executable_path
 
-    return filesystem_metadata
-
-  def calc_check_sum(self, binaries):
-    check_sum = 0
-    for binary in binaries:
-      check_sum ^= int('0b' + binary, 2)
-
-    return check_sum
-
-  def get_or_create_config_file(self):
-    with open(self.config_fp, 'a+') as config_file:
-      if len(config_file.read()) <= 0:
-        config_file.write('')
-        self.config = dict()
-        return
-
-      self.config = self.read_configuration_file()
-
-  def get_file_checksum(self, filename):
-    binary = self.read_binary(filename)
-    checksum = self.calc_check_sum(binary)
+  def read_checksum(self):
+    pe = pefile.PE(self.executable)
+    checksum = pe.OPTIONAL_HEADER.CheckSum
+    pe.close()
 
     return checksum
+  
+  def write_checksum(self, to_executable):
+    pe = pefile.PE(self.executable)
+    pe.OPTIONAL_HEADER.CheckSum = pe.generate_checksum()
+    pe.write(to_executable)
 
-  def write_to_configuration_file(self, check_sums):
-    with open(self.config_fp, 'w') as config_file:
-      config_file.write('\n'.join([f'{filename}: {check_sum}' for filename, check_sum in check_sums]))
+    print(f"Checksum is written: {pe.OPTIONAL_HEADER.CheckSum}, to file: {to_executable}")
 
-  def read_configuration_file(self):
-    with open(self.config_fp, 'r') as config_file:
-      checksums = list(map(lambda x: x.rstrip('\n'), config_file.readlines()))
+    pe.close()
 
-      checksums_view = dict()
-      for checksum_row in checksums:
-        filename, check_sum = checksum_row.split(': ')
+def main():
+  arguments = ArgvParser.parse(sys.argv)
 
-        checksums_view[filename] = int(check_sum)
+  print(arguments.current_executable)
+  print(arguments.running_copy)
+  print(arguments.original_executable)
 
-      return checksums_view
+  current_pe_processor = PEfileProcessor(arguments.current_executable)
+  checksum = current_pe_processor.read_checksum()
 
+  print(checksum)
+  if checksum == MAGIC_WORD:
+    original_fp = arguments.current_executable \
+      if arguments.original_executable is None \
+      else arguments.original_executable
+    
+    print(original_fp)
+    
+    temp_fp = arguments.current_executable.replace('.copy', '') \
+      if arguments.is_copy() \
+      else f'{arguments.current_executable[:-4]}.copy.exe'
+    
+    print(temp_fp)
+    
+    current_process_filename = arguments.extract_current_filename()
+    current_process = extract_process(current_process_filename)
 
-watcher = FileSystemWatcher()
+    if arguments.running_copy:
+      current_pe_processor.write_checksum(temp_fp)
+      subprocess.Popen([temp_fp, 'false', original_fp])
 
-checksums = watcher.read_configuration_file()
-
-executable = sys.argv[0]
-if len(checksums) == 0:
-  watcher.write_to_configuration_file([(executable, 0)])
-
-pe = pefile.PE(executable)
-current_checksum = pe.generate_checksum()
-
-print(f'previous checksums: {checksums}, current checksum: {current_checksum}')
-if checksums.get(executable, -1) == -1:
-  print('incorrect executable filename in .fileinfo')
-  sys.exit(0)
-if checksums.get(executable, -1) == 0:
-  watcher.write_to_configuration_file([(executable, current_checksum)])
-elif checksums.get(executable, -1) != 0:
-  config_checksum = checksums[executable]
-  if config_checksum != current_checksum:
-    print('Changed!')
-    watcher.write_to_configuration_file([(executable, current_checksum)])
-    input()
+      current_process.terminate()
+    
   else:
-    print('Same!')
-    input()
+    if arguments.original_executable is not None:
+      os.remove(arguments.original_executable)
+      sys.exit(0)
+    else:
+      new_pe_processor = PEfileProcessor(arguments.current_executable)
+      new_checksum = new_pe_processor.read_checksum()
+      
+      if checksum == new_checksum:
+        print(f"Checksums are equal: {checksum}")
+      else:
+        print(f"Checksums are not equal:\nHeader data: {checksum}\nCurrently read data: {new_checksum}")
+
+
+main()
